@@ -6,6 +6,7 @@ import Runs from "@/pages/Runs";
 import RunDetail from "@/pages/RunDetail";
 import Analysis from "@/pages/Analysis";
 import Code from "@/pages/Code";
+import References from "@/pages/References";
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
               <Route path="/runs/:id" element={<RunDetail />} />
               <Route path="/analysis" element={<Analysis />} />
               <Route path="/code" element={<Code />} />
+              <Route path="/references" element={<References />} />
             </Routes>
           </main>
         </div>

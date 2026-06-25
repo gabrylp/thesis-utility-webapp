@@ -1,4 +1,4 @@
-import { computeStats, formatNum } from "@/lib/stats";
+import { computeStats, computePPL, formatNum } from "@/lib/stats";
 import { Card, CardContent } from "@/components/ui/card";
 import type { FlowReading } from "@/lib/db";
 
@@ -22,9 +22,11 @@ export function FlowStats({ readings, label }: Props) {
     "n", "mean", "median", "stdDev", "variance", "coeffOfVar", "marginOfError", "min", "max",
   ];
 
+  const ppl = computePPL(sensor);
+
   return (
-    <div>
-      {label && <h4 className="text-sm font-medium mb-3">{label}</h4>}
+    <div className="space-y-4">
+      {label && <h4 className="text-sm font-medium">{label}</h4>}
       <Card>
         <CardContent className="p-0 overflow-x-auto">
           <table className="w-full text-sm">
@@ -65,6 +67,18 @@ export function FlowStats({ readings, label }: Props) {
           </table>
         </CardContent>
       </Card>
+
+      {ppl.n > 0 && (
+        <Card className="border-blue-500/30">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-4 text-sm font-mono">
+              <span className="text-muted-foreground">PPL Calibration:</span>
+              <span className="text-blue-400 font-semibold">{formatNum(ppl.calibratedPPL, 1)} pulses/L</span>
+              <span className="text-muted-foreground text-xs">({ppl.n} sample{ppl.n !== 1 ? "s" : ""}, CoV {formatNum(ppl.coeffOfVar, 1)}%)</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

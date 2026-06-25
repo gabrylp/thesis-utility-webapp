@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { db, type TestRun, type FlowReading, type PowerReading, type CommReading } from "@/lib/db";
 import { syncManager } from "@/lib/sync";
 import { generateId, formatDateTime } from "@/lib/utils";
-import { computeFlowRate } from "@/lib/stats";
+import { computeFlowRate, estimateVolumeFromPulses } from "@/lib/stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -538,9 +538,10 @@ export default function RunDetail() {
                 <p className="text-sm text-muted-foreground text-center py-6">No flow readings recorded.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs table-fixed">
+                    <table className="w-full text-xs table-fixed">
                     <thead>
                       <tr className="border-b border-border/50 text-muted-foreground">
+                        <th className="text-center font-medium py-1.5 px-2 w-8">#</th>
                         <th className="text-left font-medium py-1.5 px-2">Method</th>
                         <th className="text-right font-medium py-1.5 px-2">
                           <div className="flex items-center justify-end gap-1">
@@ -566,6 +567,7 @@ export default function RunDetail() {
                         </th>
                         <th className="text-right font-medium py-1.5 px-2">Vol (mL)</th>
                         <th className="text-right font-medium py-1.5 px-2">Pulses</th>
+                        <th className="text-right font-medium py-1.5 px-2 text-blue-400" title="Estimated volume from pulses using calibrated K-factor">Est. Vol</th>
                         <th className="text-right font-medium py-1.5 px-2">Flow (L/h)</th>
                         <th className="text-left font-medium py-1.5 px-2">Notes</th>
                         <th className="font-medium py-1.5 px-2 w-10"></th>
@@ -574,6 +576,7 @@ export default function RunDetail() {
                     <tbody>
                       {flowReadings.map((r, idx) => (
                         <tr key={r.id} className="border-b border-border/30 hover:bg-secondary/10 transition-colors">
+                          <td className="py-1 px-2 text-center text-muted-foreground">{idx + 1}</td>
                           <td className="py-1 px-2">
                             <Select
                               value={r.method}
@@ -596,6 +599,9 @@ export default function RunDetail() {
                           </td>
                           <td className="py-1 px-2">
                             <Input type="number" value={r.method === "with_sensor" ? r.pulses || "" : ""} disabled={r.method !== "with_sensor"} onChange={(e) => updateFlowReading(r.id, { pulses: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right disabled:opacity-30 [appearance:textfield]" />
+                          </td>
+                          <td className="py-1 px-2 text-right font-mono text-xs text-blue-400" title="Estimated from pulses using K-factor">
+                            {r.method === "with_sensor" && r.pulses > 0 ? estimateVolumeFromPulses(r.pulses, run?.k_factor || 450).toFixed(1) : "-"}
                           </td>
                           <td className="py-1 px-2 text-right font-mono font-semibold text-green-400">
                             {r.flow_rate_lh.toFixed(1)}
@@ -768,9 +774,10 @@ export default function RunDetail() {
               <p className="text-sm text-muted-foreground text-center py-6">No power readings recorded.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs table-fixed">
+                    <table className="w-full text-xs table-fixed">
                   <thead>
                     <tr className="border-b border-border/50 text-muted-foreground">
+                      <th className="text-center font-medium py-1.5 px-2 w-8">#</th>
                       <th className="text-left font-medium py-1.5 px-2">Time</th>
                       <th className="text-right font-medium py-1.5 px-2">Voltage (V)</th>
                       <th className="text-right font-medium py-1.5 px-2">Current (A)</th>
@@ -779,8 +786,9 @@ export default function RunDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {powerReadings.map((pr) => (
+                    {powerReadings.map((pr, idx) => (
                       <tr key={pr.id} className="border-b border-border/30 hover:bg-secondary/10 transition-colors">
+                        <td className="py-1 px-2 text-center text-muted-foreground">{idx + 1}</td>
                         <td className="py-1 px-2 text-muted-foreground">{formatDateTime(pr.timestamp)}</td>
                         <td className="py-1 px-2">
                           <Input type="number" step="0.1" value={pr.voltage} onChange={(e) => updatePowerReading(pr.id, { voltage: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right [appearance:textfield]" />

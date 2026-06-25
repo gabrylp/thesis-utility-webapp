@@ -1,4 +1,5 @@
-import { independentTTest, computeStats, formatNum } from "@/lib/stats";
+import { useMemo } from "react";
+import { independentTTest, computeStats, computePPL, computeSensorResistance, formatNum } from "@/lib/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FlowReading } from "@/lib/db";
 import {
@@ -22,8 +23,18 @@ export function SensorComparison({ readings, title, theme = "dark" }: Props) {
     tick: isDark ? "#94A3B8" : "#64748B",
     label: isDark ? "#F8FAFC" : "#334155",
   };
-  const sensor = readings.filter((r) => r.method === "with_sensor").map((r) => r.flow_rate_lh);
-  const noSensor = readings.filter((r) => r.method === "without_sensor").map((r) => r.flow_rate_lh);
+
+  const sensorReadings = readings.filter((r) => r.method === "with_sensor");
+  const noSensorReadings = readings.filter((r) => r.method === "without_sensor");
+  const sensor = sensorReadings.map((r) => r.flow_rate_lh);
+  const noSensor = noSensorReadings.map((r) => r.flow_rate_lh);
+
+  const ppl = useMemo(() => computePPL(sensorReadings), [sensorReadings]);
+
+  const resistance = useMemo(
+    () => computeSensorResistance(sensor, noSensor),
+    [sensor, noSensor]
+  );
 
   if (sensor.length < 2 || noSensor.length < 2) {
     return (
@@ -73,6 +84,83 @@ export function SensorComparison({ readings, title, theme = "dark" }: Props) {
         </Card>
       </div>
 
+      {/* Sensor Resistance Factor */}
+      <Card className={`border-2 ${resistance.volumeLossPct > 10 ? "border-yellow-500/50" : "border-green-500/50"}`}>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            Sensor Resistance Analysis
+            <span className={`text-xs px-2 py-0.5 rounded ${resistance.volumeLossPct > 10 ? "bg-yellow-500/20 text-yellow-400" : "bg-green-500/20 text-green-400"}`}>
+              {resistance.volumeLossPct > 10 ? "Significant" : "Minimal"}
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-3 gap-4 text-center font-mono text-sm">
+            <div className="rounded-lg border border-border p-2">
+              <p className="text-[10px] text-muted-foreground">Resistance Factor</p>
+              <p className="font-bold text-lg">{formatNum(resistance.resistanceFactor, 4)}</p>
+            </div>
+            <div className="rounded-lg border border-border p-2">
+              <p className="text-[10px] text-muted-foreground">Volume Loss</p>
+              <p className={`font-bold text-lg ${resistance.volumeLossPct > 10 ? "text-yellow-400" : "text-green-400"}`}>
+                {formatNum(resistance.volumeLossPct, 1)}%
+              </p>
+            </div>
+            <div className="rounded-lg border border-border p-2">
+              <p className="text-[10px] text-muted-foreground">Flow Difference</p>
+              <p className="font-bold text-lg text-muted-foreground">
+                {formatNum(resistance.withoutSensorMean - resistance.withSensorMean)} L/h
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground border-t border-border pt-2">
+            Resistance Factor = mean(with sensor) / mean(without sensor) = {formatNum(resistance.withSensorMean)} / {formatNum(resistance.withoutSensorMean)} = {formatNum(resistance.resistanceFactor, 4)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            The flow sensor reduces the measured flow rate by approximately {formatNum(resistance.volumeLossPct, 1)}%.
+            In deployment (without sensor), actual flow rate is expected to be higher by this factor.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* PPL Calibration */}
+      {ppl.n > 0 && (
+        <Card className="border-2 border-blue-500/50">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              PPL Calibration
+              <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">
+                {ppl.n} sample{ppl.n !== 1 ? "s" : ""}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-4 text-center font-mono text-sm">
+              <div className="rounded-lg border border-border p-2">
+                <p className="text-[10px] text-muted-foreground">Calibrated PPL</p>
+                <p className="font-bold text-lg text-blue-400">{formatNum(ppl.calibratedPPL, 1)}</p>
+              </div>
+              <div className="rounded-lg border border-border p-2">
+                <p className="text-[10px] text-muted-foreground">Std Dev</p>
+                <p className="font-bold text-lg">{formatNum(ppl.stdDev, 1)}</p>
+              </div>
+              <div className="rounded-lg border border-border p-2">
+                <p className="text-[10px] text-muted-foreground">CoV</p>
+                <p className={`font-bold text-lg ${ppl.coeffOfVar < 5 ? "text-green-400" : ppl.coeffOfVar < 10 ? "text-yellow-400" : "text-red-400"}`}>
+                  {formatNum(ppl.coeffOfVar, 1)}%
+                </p>
+              </div>
+            </div>
+            {ppl.n >= 3 && (
+              <p className="text-xs text-muted-foreground border-t border-border pt-2">
+                Suggested K-factor for this sensor: <span className="text-foreground font-semibold">{formatNum(ppl.calibratedPPL, 1)}</span> pulses/L.
+                Use this value in your TestRun settings for accurate volume estimation from pulses.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card className={`border-2 ${ttest.significant ? "border-red-500/50" : "border-green-500/50"}`}>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">
@@ -99,7 +187,7 @@ export function SensorComparison({ readings, title, theme = "dark" }: Props) {
           </div>
           <p className="text-xs text-muted-foreground pt-2 border-t border-border">
             {ttest.significant
-              ? "The flow sensor significantly affects the flow rate (p &lt; 0.05)."
+              ? "The flow sensor significantly affects the flow rate (p < 0.05)."
               : "No significant difference detected — the flow sensor resistance does NOT meaningfully reduce the flow rate (p ≥ 0.05)."}
             {" "}α = 0.05.
           </p>

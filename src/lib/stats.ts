@@ -173,5 +173,63 @@ export function computeFlowRate(method: "with_sensor" | "without_sensor", timeSe
 export function projectVolume(avgFlowRate: number, targetHours: number, actualHours: number, moe: number): { volume: number; moe: number; lower: number; upper: number } {
   const vol = avgFlowRate * targetHours;
   const projMoe = targetHours > 0 && actualHours > 0 ? moe * Math.sqrt(targetHours / actualHours) : 0;
-  return { volume: vol, moe: projMoe, lower: vol - projMoe, upper: vol + projMoe };
+  return { volume: vol, moe: projMoe, lower: Math.max(0, vol - projMoe), upper: vol + projMoe };
+}
+
+export interface PPLResult {
+  perReading: { index: number; ppl: number; pulses: number; volumeMl: number }[];
+  calibratedPPL: number;
+  stdDev: number;
+  coeffOfVar: number;
+  n: number;
+}
+
+export function computePPL(readings: { pulses: number; volume_ml: number }[]): PPLResult {
+  const valid = readings.filter((r) => r.pulses > 0 && r.volume_ml > 0);
+  const perReading = valid.map((r, i) => ({
+    index: i,
+    ppl: r.pulses / (r.volume_ml / 1000),
+    pulses: r.pulses,
+    volumeMl: r.volume_ml,
+  }));
+  const pplValues = perReading.map((r) => r.ppl);
+  const s = computeStats(pplValues);
+  return {
+    perReading,
+    calibratedPPL: s.mean,
+    stdDev: s.stdDev,
+    coeffOfVar: s.coeffOfVar,
+    n: s.n,
+  };
+}
+
+export interface SensorResistanceResult {
+  withSensorMean: number;
+  withoutSensorMean: number;
+  resistanceFactor: number;
+  volumeLossPct: number;
+  withSensorN: number;
+  withoutSensorN: number;
+}
+
+export function computeSensorResistance(
+  withSensorFlowRates: number[],
+  withoutSensorFlowRates: number[]
+): SensorResistanceResult {
+  const wsMean = mean(withSensorFlowRates);
+  const wosMean = mean(withoutSensorFlowRates);
+  const rf = wosMean > 0 ? wsMean / wosMean : 0;
+  return {
+    withSensorMean: wsMean,
+    withoutSensorMean: wosMean,
+    resistanceFactor: rf,
+    volumeLossPct: (1 - rf) * 100,
+    withSensorN: withSensorFlowRates.length,
+    withoutSensorN: withoutSensorFlowRates.length,
+  };
+}
+
+export function estimateVolumeFromPulses(pulses: number, ppl: number): number {
+  if (ppl <= 0) return 0;
+  return (pulses / ppl) * 1000;
 }

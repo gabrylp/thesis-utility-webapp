@@ -17,7 +17,7 @@ const navItems = [
   { to: "/analysis", label: "Analysis", icon: BarChart3 },
   { to: "/code", label: "Code Snippets", icon: FileCode2 },
   { to: "/bom", label: "BOM & Budget", icon: Package, disabled: true },
-  { to: "/references", label: "References", icon: BookOpen, disabled: true },
+  { to: "/references", label: "References", icon: BookOpen },
   { to: "/calculator", label: "Calculator", icon: Calculator, disabled: true },
   { to: "/settings", label: "Settings", icon: Settings, disabled: true },
 ];
