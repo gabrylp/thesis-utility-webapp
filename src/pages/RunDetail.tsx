@@ -76,7 +76,7 @@ export default function RunDetail() {
     const existing = await db.flow_readings.get(readingId);
     if (!existing) return;
     const merged = { ...existing, ...updates };
-    const k = run?.k_factor || 450;
+    const k = run?.k_factor || 440;
     merged.flow_rate_lh = computeFlowRate(merged.method, merged.time_sec, merged.volume_ml, merged.pulses, k);
     await db.flow_readings.put(merged);
     await syncManager.queueChange("flow_readings", "update", merged as any);
@@ -266,7 +266,7 @@ export default function RunDetail() {
     const notesIdx = headers.indexOf("notes");
     if (methodIdx === -1 || timeIdx === -1 || volIdx === -1) { alert("CSV must have headers: method, time_sec, volume_ml"); return; }
     const now = new Date().toISOString();
-    const k = run.k_factor || 450;
+    const k = run.k_factor || 440;
     const batch: FlowReading[] = [];
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
@@ -505,7 +505,7 @@ export default function RunDetail() {
       {tab === "flow" && isFlow && (
         <div className="space-y-4">
           <FlowFormulaCard
-            kFactor={run.k_factor || 450}
+            kFactor={run.k_factor || 440}
             onChange={(k) => {
               updateRun({ k_factor: k });
               flowReadings.forEach((r) => {
@@ -557,10 +557,10 @@ export default function RunDetail() {
                               setDurationSec(v);
                               if (v > 0) {
                                 for (const r of flowReadings) {
-                                  const updated = { ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, run?.k_factor || 450) };
+                                  const updated = { ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, run?.k_factor || 440) };
                                   await db.flow_readings.put(updated);
                                 }
-                                setFlowReadings((prev) => prev.map((r) => ({ ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, run?.k_factor || 450) })));
+                                setFlowReadings((prev) => prev.map((r) => ({ ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, run?.k_factor || 440) })));
                               }
                             }} className="w-12 h-6 rounded border border-input bg-transparent px-1 text-[10px] text-center [appearance:textfield]" placeholder="Dur" title="Duration (s) — updates all time values" />
                           </div>
@@ -601,7 +601,7 @@ export default function RunDetail() {
                             <Input type="number" value={r.method === "with_sensor" ? r.pulses || "" : ""} disabled={r.method !== "with_sensor"} onChange={(e) => updateFlowReading(r.id, { pulses: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right disabled:opacity-30 [appearance:textfield]" />
                           </td>
                           <td className="py-1 px-2 text-right font-mono text-xs text-blue-400" title="Estimated from pulses using K-factor">
-                            {r.method === "with_sensor" && r.pulses > 0 ? estimateVolumeFromPulses(r.pulses, run?.k_factor || 450).toFixed(1) : "-"}
+                            {r.method === "with_sensor" && r.pulses > 0 ? estimateVolumeFromPulses(r.pulses, run?.k_factor || 440).toFixed(1) : "-"}
                           </td>
                           <td className="py-1 px-2 text-right font-mono font-semibold text-green-400">
                             {r.flow_rate_lh.toFixed(1)}

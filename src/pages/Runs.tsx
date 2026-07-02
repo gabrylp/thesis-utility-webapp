@@ -53,7 +53,7 @@ export default function Runs() {
       wave_condition: modal.runType === "flow_rate" ? form.wave_condition : "",
       notes: form.notes,
       date: now.split("T")[0] || "",
-      k_factor: 450,
+      k_factor: 440,
       status: "draft",
       run_type: modal.runType,
       sort_order: Date.now(),

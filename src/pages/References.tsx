@@ -51,7 +51,7 @@ const SECTIONS: Section[] = [
         ],
         usedIn: "Flow Rate tab, RunDetail",
         significance:
-          "Estimates flow rate from the hall-effect sensor's pulse output. The K-factor (default 450 pulses/L for YF-S201) converts pulses to volume. Must be calibrated for accuracy.",
+          "Estimates flow rate from the hall-effect sensor's pulse output. The K-factor (default 440 pulses/L for YF-S201) converts pulses to volume. Must be calibrated for accuracy.",
       },
     ],
   },
