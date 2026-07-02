@@ -32,12 +32,12 @@ export function FlowFormulaCard({ kFactor, onChange }: Props) {
             id="kfactor"
             type="number"
             value={kFactor}
-            onChange={(e) => onChange(parseFloat(e.target.value) || 420)}
+            onChange={(e) => onChange(parseFloat(e.target.value) || 440)}
             className="w-24 h-8 text-sm font-mono"
             step={1}
             min={1}
           />
-          <span className="text-[10px] text-muted-foreground">Default: 420</span>
+          <span className="text-[10px] text-muted-foreground">Default: 440</span>
         </div>
       </CardContent>
     </Card>
