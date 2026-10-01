@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { db, type TestRun, type FlowReading, type PowerReading, type CommReading } from "@/lib/db";
-import { computeStats, formatNum, computePPL, computeSensorResistance } from "@/lib/stats";
+import { db, type TestRun, type FlowReading, type PowerReading, type CommReading, FLOW_METHOD_LABELS } from "@/lib/db";
+import { computeStats, formatNum, computeAggregatePPL, computeSensorResistance, computeFlowRate, buildFlowSeries } from "@/lib/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { RunSelector } from "@/components/analysis/RunSelector";
@@ -17,7 +17,7 @@ import { PacketLossChart } from "@/components/analysis/PacketLossChart";
 import { CommStats } from "@/components/analysis/CommStats";
 import { CustomCommChart } from "@/components/analysis/CustomCommChart";
 import { DataInterpretation, type Insight } from "@/components/analysis/DataInterpretation";
-import { Activity, Droplets, Battery, Beaker, BarChart3, ChartLine, Radio, Signal, Wifi, Settings2, Filter, Check, ChevronDown, Sun, Moon, Eye, EyeOff, LayoutIcon } from "lucide-react";
+import { Activity, Droplets, Battery, Beaker, BarChart3, ChartLine, Radio, Signal, Wifi, Settings2, Filter, Check, ChevronDown, Sun, Moon, Eye, EyeOff, LayoutIcon, Plus, Minus } from "lucide-react";
 
 export default function Analysis() {
   const [runs, setRuns] = useState<TestRun[]>([]);
@@ -29,6 +29,7 @@ export default function Analysis() {
   const [showStats, setShowStats] = useState(false);
   const [typeFilter, setTypeFilter] = useState<"flow_rate" | "communication" | null>(null);
   const [chartLayout, setChartLayout] = useState<"connected" | "layered" | "separate">("separate");
+  const [pumpCount, setPumpCount] = useState(2);
 
   useEffect(() => {
     db.test_runs.toArray().then((data) => {
@@ -65,7 +66,11 @@ export default function Analysis() {
   const hasFlow = selectedRuns.some((r) => (r.run_type ?? "flow_rate") === "flow_rate");
   const hasComm = selectedRuns.some((r) => r.run_type === "communication");
 
-  const totalFlowRate = flowReadings.map((r) => r.flow_rate_lh);
+  const kFactor = selectedRuns[0]?.k_factor || 440;
+
+  const totalFlowRate = flowReadings
+    .filter((r) => r.time_sec > 0 && r.volume_ml > 0)
+    .map((r) => computeFlowRate("without_sensor", r.time_sec, r.volume_ml, r.pulses, kFactor));
   const flowStats = computeStats(totalFlowRate);
   const totalHours = flowReadings.length > 0
     ? Math.max(...flowReadings.map((r) => r.time_sec)) / 3600
@@ -74,10 +79,11 @@ export default function Analysis() {
   const flowInsights = useMemo((): Insight[] => {
     if (flowReadings.length === 0) return [];
     const insights: Insight[] = [];
-    const targetPct = (flowStats.mean / 1000) * 100;
+    const combinedFlow = flowStats.mean * pumpCount;
+    const targetPct = (combinedFlow / 1000) * 100;
     insights.push({
       icon: targetPct >= 95 ? "check" : targetPct >= 80 ? "warning" : "alert",
-      text: `Mean flow rate is ${formatNum(flowStats.mean)} L/h (${targetPct.toFixed(0)}% of the 1000 L/h target).`,
+      text: `Combined flow (${pumpCount} pumps): ${formatNum(combinedFlow)} L/h (${targetPct.toFixed(0)}% of the 1000 L/h target). Per-pump mean: ${formatNum(flowStats.mean)} L/h.`,
     });
     const cov = flowStats.coeffOfVar;
     const rating = cov < 5 ? "excellent" : cov < 10 ? "good" : cov < 20 ? "fair" : "poor";
@@ -85,30 +91,27 @@ export default function Analysis() {
       icon: cov < 10 ? "check" : cov < 20 ? "warning" : "alert",
       text: `Flow consistency: ${rating} (CoV = ${formatNum(cov)}%).`,
     });
-    const sensor = flowReadings.filter((r) => r.method === "with_sensor");
-    const noSensor = flowReadings.filter((r) => r.method === "without_sensor");
-    if (sensor.length > 0 && noSensor.length > 0) {
-      const sensorMean = computeStats(sensor.map((r) => r.flow_rate_lh)).mean;
-      const noSensorMean = computeStats(noSensor.map((r) => r.flow_rate_lh)).mean;
-      const diff = Math.abs(sensorMean - noSensorMean);
+    const { pulse, actual } = buildFlowSeries(flowReadings, kFactor);
+    if (pulse.length > 0 && actual.length > 0) {
+      const pulseMean = computeStats(pulse).mean;
+      const actualMean = computeStats(actual).mean;
+      const diff = Math.abs(pulseMean - actualMean);
       insights.push({
         icon: diff < 50 ? "info" : "warning",
-        text: `Sensor impact: with sensor averages ${formatNum(sensorMean)} L/h, without sensor averages ${formatNum(noSensorMean)} L/h (${diff.toFixed(1)} L/h difference).`,
+        text: `Pulse-based vs actual: ${FLOW_METHOD_LABELS.with_sensor} averages ${formatNum(pulseMean)} L/h, ${FLOW_METHOD_LABELS.without_sensor} averages ${formatNum(actualMean)} L/h (${diff.toFixed(1)} L/h difference).`,
       });
-      const resistance = computeSensorResistance(
-        sensor.map((r) => r.flow_rate_lh),
-        noSensor.map((r) => r.flow_rate_lh)
-      );
+      const resistance = computeSensorResistance(pulse, actual);
       insights.push({
         icon: resistance.volumeLossPct < 10 ? "check" : "warning",
         text: `Sensor resistance factor: ${formatNum(resistance.resistanceFactor, 4)} (flow reduced by ${formatNum(resistance.volumeLossPct, 1)}%).`,
       });
     }
-    const ppl = computePPL(sensor);
-    if (ppl.n > 0) {
+    const aggPpl = computeAggregatePPL(flowReadings);
+    if (aggPpl.n > 0) {
+      const drift = Math.abs(aggPpl.ppl - kFactor) / kFactor * 100;
       insights.push({
-        icon: ppl.coeffOfVar < 5 ? "check" : ppl.coeffOfVar < 10 ? "warning" : "alert",
-        text: `PPL calibration: ${formatNum(ppl.calibratedPPL, 1)} pulses/L from ${ppl.n} sample${ppl.n !== 1 ? "s" : ""} (CoV = ${formatNum(ppl.coeffOfVar, 1)}%).`,
+        icon: drift < 2 ? "check" : drift < 10 ? "warning" : "alert",
+        text: `Calculated PPL: ${formatNum(aggPpl.ppl, 1)} pulses/L from ${formatNum(aggPpl.avgPulses, 1)} avg pulses over ${formatNum(aggPpl.avgVolumeMl, 1)} mL avg volume (${aggPpl.n} sample${aggPpl.n !== 1 ? "s" : ""}) — ${drift < 0.05 ? "matches" : `${drift.toFixed(1)}% ${aggPpl.ppl > kFactor ? "above" : "below"}`} the K-factor of ${kFactor}.`,
       });
     }
     insights.push({
@@ -116,7 +119,7 @@ export default function Analysis() {
       text: `Based on ${flowStats.n} flow reading${flowStats.n !== 1 ? "s" : ""} across ${selectedRuns.length} run${selectedRuns.length !== 1 ? "s" : ""}.`,
     });
     return insights;
-  }, [flowReadings, flowStats, selectedRuns]);
+  }, [flowReadings, flowStats, selectedRuns, pumpCount, kFactor]);
 
   const volumeInsights = useMemo((): Insight[] => {
     if (flowReadings.length === 0) return [];
@@ -127,14 +130,14 @@ export default function Analysis() {
     const avgFlowLh = totalTimeSec > 0 ? (totalVolMl * 3.6) / totalTimeSec : 0;
     insights.push({
       icon: "info",
-      text: `Total accumulated volume: ${totalVolL.toFixed(2)} L (${flowReadings.length} reading${flowReadings.length !== 1 ? "s" : ""}).`,
+      text: `Total accumulated volume (${pumpCount} pumps): ${(totalVolL * pumpCount).toFixed(2)} L (${flowReadings.length} reading${flowReadings.length !== 1 ? "s" : ""}).`,
     });
     insights.push({
       icon: "info",
-      text: `Time-weighted average flow rate: ${formatNum(avgFlowLh)} L/h.`,
+      text: `Time-weighted average flow rate (${pumpCount} pumps): ${formatNum(avgFlowLh * pumpCount)} L/h.`,
     });
     if (avgFlowLh > 0) {
-      const hoursToTarget = 1000 / avgFlowLh;
+      const hoursToTarget = 1000 / (avgFlowLh * pumpCount);
       insights.push({
         icon: hoursToTarget <= 1 ? "check" : hoursToTarget <= 2 ? "warning" : "alert",
         text: `At current rate, filling a 1000L container would take approximately ${hoursToTarget.toFixed(1)} hours.`,
@@ -281,7 +284,7 @@ export default function Analysis() {
                   <TabsTrigger value="flow"><Activity className="h-4 w-4 mr-1.5" />Flow Rate</TabsTrigger>
                   <TabsTrigger value="volume"><Droplets className="h-4 w-4 mr-1.5" />Volume</TabsTrigger>
                   <TabsTrigger value="power"><Battery className="h-4 w-4 mr-1.5" />Power</TabsTrigger>
-                  <TabsTrigger value="sensor"><Beaker className="h-4 w-4 mr-1.5" />Sensor t-Test</TabsTrigger>
+                  <TabsTrigger value="sensor"><Beaker className="h-4 w-4 mr-1.5" />Pulse vs Actual t-Test</TabsTrigger>
                   <TabsTrigger value="custom"><ChartLine className="h-4 w-4 mr-1.5" />Custom Graph</TabsTrigger>
                   <TabsTrigger value="projection"><BarChart3 className="h-4 w-4 mr-1.5" />Projection</TabsTrigger>
                 </>
@@ -316,18 +319,31 @@ export default function Analysis() {
                 {chartTheme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
                 {chartTheme === "dark" ? "Light" : "Dark"}
               </button>
+              <span className="text-muted-foreground/30">|</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground">Pumps:</span>
+                <div className="flex rounded-md border border-input overflow-hidden">
+                  <button onClick={() => setPumpCount(Math.max(1, pumpCount - 1))}
+                    className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors leading-none"
+                  ><Minus className="h-3 w-3" /></button>
+                  <span className="px-2.5 py-1.5 text-[11px] font-semibold text-foreground border-x border-input">{pumpCount}</span>
+                  <button onClick={() => setPumpCount(pumpCount + 1)}
+                    className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors leading-none"
+                  ><Plus className="h-3 w-3" /></button>
+                </div>
+              </div>
             </div>
 
             {hasFlow && (
               <>
                 <TabsContent value="flow" className="space-y-6">
-                  <FlowRateChart readings={flowReadings} title="Flow Rate Over Time" theme={chartTheme} layout={chartLayout} runs={selectedRuns} />
-                  <FlowStats readings={flowReadings} label="Flow Rate Statistics by Method" />
+                  <FlowRateChart readings={flowReadings} title="Flow Rate Over Time" theme={chartTheme} layout={chartLayout} runs={selectedRuns} pumpCount={pumpCount} />
+                  <FlowStats readings={flowReadings} label="Flow Rate Statistics by Basis" pumpCount={pumpCount} kFactor={kFactor} />
                   <DataInterpretation insights={flowInsights} />
                 </TabsContent>
 
                 <TabsContent value="volume" className="space-y-6">
-                  <VolumeChart readings={flowReadings} title="Accumulated Sampling Volume" theme={chartTheme} layout={chartLayout} runs={selectedRuns} />
+                  <VolumeChart readings={flowReadings} title="Accumulated Sampling Volume" theme={chartTheme} layout={chartLayout} runs={selectedRuns} pumpCount={pumpCount} />
                   <DataInterpretation insights={volumeInsights} />
                 </TabsContent>
 
@@ -337,7 +353,7 @@ export default function Analysis() {
                 </TabsContent>
 
                 <TabsContent value="sensor" className="space-y-6">
-                  <SensorComparison readings={flowReadings} title="With Sensor vs Without Sensor Comparison" theme={chartTheme} />
+                  <SensorComparison readings={flowReadings} title={`${FLOW_METHOD_LABELS.with_sensor} vs ${FLOW_METHOD_LABELS.without_sensor} Comparison`} theme={chartTheme} kFactor={kFactor} />
                 </TabsContent>
 
                 <TabsContent value="custom" className="space-y-6">
@@ -346,11 +362,11 @@ export default function Analysis() {
 
                 <TabsContent value="projection" className="space-y-6">
                   <ProjectionCard
-                    avgFlowRate={flowStats.mean}
+                    avgFlowRate={flowStats.mean * pumpCount}
                     actualHours={totalHours || 0.5}
                     moe={flowStats.marginOfError}
-                    minFlowRate={flowStats.min}
-                    maxFlowRate={flowStats.max}
+                    minFlowRate={flowStats.min * pumpCount}
+                    maxFlowRate={flowStats.max * pumpCount}
                     theme={chartTheme}
                   />
                 </TabsContent>

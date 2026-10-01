@@ -29,6 +29,17 @@ export interface FlowReading {
   synced_at: string | null;
 }
 
+export type FlowMethod = FlowReading["method"];
+
+export const FLOW_METHOD_LABELS: Record<FlowMethod, string> = {
+  with_sensor: "Pulse-based",
+  without_sensor: "Actual",
+};
+
+export function flowMethodLabel(m: string): string {
+  return FLOW_METHOD_LABELS[m as FlowMethod] ?? m;
+}
+
 export interface PowerReading {
   id: string;
   run_id: string;

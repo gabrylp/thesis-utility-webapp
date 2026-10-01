@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
-import type { FlowReading, PowerReading, TestRun } from "@/lib/db";
+import { flowMethodLabel, type FlowReading, type PowerReading, type TestRun } from "@/lib/db";
 import { formatDateTime } from "@/lib/utils";
 
 type DataRow = Record<string, any>;
@@ -131,7 +131,7 @@ export function CustomChart({ flowReadings, powerReadings, runs, title, theme = 
     const groups = Array.from(groupedMap.entries()).map(([rawKey, data]) => {
       const name = splitBy === "run"
         ? (runTitles.get(rawKey) || `Run ${rawKey.slice(0, 6)}...`)
-        : rawKey;
+        : flowMethodLabel(rawKey);
       return { name, data };
     });
     const mergedData = (() => {
@@ -214,7 +214,7 @@ export function CustomChart({ flowReadings, powerReadings, runs, title, theme = 
           <label className="text-xs text-muted-foreground">Split By</label>
           <Select value={splitBy} onChange={(e) => setSplitBy(e.target.value as any)} options={[
             { value: "none", label: "None" },
-            { value: "method", label: "Method (sensor/no sensor)" },
+            { value: "method", label: "Flowrate Basis (Pulse-based / Actual)" },
             { value: "run", label: "Run (by title)" },
           ]} />
         </div>

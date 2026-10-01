@@ -10,11 +10,12 @@ interface Props {
   theme?: "dark" | "light";
   layout?: "connected" | "layered" | "separate";
   runs?: TestRun[];
+  pumpCount?: number;
 }
 
 const COLORS = ["#22C55E", "#3B82F6", "#A855F7", "#F59E0B", "#EF4444", "#EC4899", "#14B8A6", "#F97316"];
 
-export function VolumeChart({ readings, title, theme = "dark", layout = "separate", runs }: Props) {
+export function VolumeChart({ readings, title, theme = "dark", layout = "separate", runs, pumpCount = 1 }: Props) {
   const isDark = theme === "dark";
   const tc = {
     grid: isDark ? "hsl(217 33% 20%)" : "#E2E8F0",
@@ -56,7 +57,7 @@ export function VolumeChart({ readings, title, theme = "dark", layout = "separat
     const sorted = [...rs].sort((a, b) => a.time_sec - b.time_sec);
     return sorted.map((r) => {
       cumTimeSec += r.time_sec;
-      cumVolumeMl += r.volume_ml;
+      cumVolumeMl += r.volume_ml * pumpCount;
       return {
         elapsedMin: Math.round((cumTimeSec / 60) * 10) / 10,
         volume: Math.round((cumVolumeMl / 1000) * 10) / 10,
@@ -108,12 +109,12 @@ export function VolumeChart({ readings, title, theme = "dark", layout = "separat
   const statCards = (
     <div className="grid grid-cols-2 gap-3 mb-3">
       <div className="rounded-lg border border-border p-3 text-center">
-        <p className="text-[11px] text-muted-foreground">Est. Total Volume</p>
+        <p className="text-[11px] text-muted-foreground">{pumpCount > 1 ? `Est. Combined Volume (${pumpCount} pumps)` : "Est. Total Volume"}</p>
         <p className="text-lg font-bold text-green-400">{totalVolume.toFixed(1)} L</p>
         <p className="text-[10px] text-muted-foreground mt-0.5">sum of volume_ml → L</p>
       </div>
       <div className="rounded-lg border border-border p-3 text-center">
-        <p className="text-[11px] text-muted-foreground">Projected to 1h</p>
+        <p className="text-[11px] text-muted-foreground">{pumpCount > 1 ? `Proj. 1h (${pumpCount} pumps)` : "Projected to 1h"}</p>
         <p className="text-lg font-bold text-yellow-400">{projectedHour.toFixed(1)} L</p>
         <p className="text-[10px] text-muted-foreground mt-0.5">total L ÷ total h (time-weighted avg)</p>
       </div>
@@ -131,7 +132,7 @@ export function VolumeChart({ readings, title, theme = "dark", layout = "separat
             <AreaChart data={connectedData} margin={{ top: 5, right: 20, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={tc.grid} />
               <XAxis dataKey="elapsedMin" tick={{ fontSize: 10, fill: tc.tick }} unit=" min" label={{ value: "Time (min)", position: "insideBottom", offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
-              <YAxis tick={{ fontSize: 11, fill: tc.tick }} unit=" L" label={{ value: "Volume (L)", position: "insideLeft", angle: -90, offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
+              <YAxis tick={{ fontSize: 11, fill: tc.tick }} unit=" L" label={{ value: pumpCount > 1 ? "Combined Volume (L)" : "Volume (L)", position: "insideLeft", angle: -90, offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
               <Tooltip content={tooltipContent} />
               <ReferenceLine y={1000} stroke="#F59E0B" strokeDasharray="5 5" label={{ value: "1000 L Target", fill: "#F59E0B", fontSize: 11 }} />
               <Area type="monotone" dataKey="volume" stroke="#22C55E" fill="#22C55E" fillOpacity={0.15} strokeWidth={2} name="Volume" />
@@ -145,7 +146,7 @@ export function VolumeChart({ readings, title, theme = "dark", layout = "separat
             <AreaChart data={layeredData} margin={{ top: 5, right: 20, left: 20, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={tc.grid} />
               <XAxis dataKey="elapsedMin" tick={{ fontSize: 10, fill: tc.tick }} unit=" min" type="number" domain={["auto", "auto"]} label={{ value: "Time (min)", position: "insideBottom", offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
-              <YAxis tick={{ fontSize: 11, fill: tc.tick }} unit=" L" label={{ value: "Volume (L)", position: "insideLeft", angle: -90, offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
+              <YAxis tick={{ fontSize: 11, fill: tc.tick }} unit=" L" label={{ value: pumpCount > 1 ? "Combined Volume (L)" : "Volume (L)", position: "insideLeft", angle: -90, offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
               <Tooltip content={tooltipContent} />
               <Legend />
               <ReferenceLine y={1000} stroke="#F59E0B" strokeDasharray="5 5" label={{ value: "1000 L Target", fill: "#F59E0B", fontSize: 11 }} />
@@ -166,7 +167,7 @@ export function VolumeChart({ readings, title, theme = "dark", layout = "separat
                   <AreaChart data={gData} margin={{ top: 25, right: 20, left: 20, bottom: 40 }} style={{ background: isDark ? 'transparent' : '#FFFFFF', borderRadius: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={tc.grid} />
                     <XAxis dataKey="elapsedMin" tick={{ fontSize: 10, fill: tc.tick }} unit=" min" label={{ value: "Time (min)", position: "insideBottom", offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
-                    <YAxis tick={{ fontSize: 10, fill: tc.tick }} unit=" L" label={{ value: "Volume (L)", position: "insideLeft", angle: -90, offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
+                    <YAxis tick={{ fontSize: 10, fill: tc.tick }} unit=" L" label={{ value: pumpCount > 1 ? "Combined Volume (L)" : "Volume (L)", position: "insideLeft", angle: -90, offset: -5, style: { fill: tc.tick, fontSize: 11 } }} />
                     <Tooltip content={tooltipContent} />
                     <Area type="monotone" dataKey="volume" stroke={COLORS[i % COLORS.length]!} fill={COLORS[i % COLORS.length]!} fillOpacity={0.15} strokeWidth={2} name="Volume" />
                   </AreaChart>

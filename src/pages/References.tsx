@@ -29,7 +29,7 @@ const SECTIONS: Section[] = [
     color: "text-green-400",
     formulas: [
       {
-        name: "Flow Rate (Without Sensor)",
+        name: "Flow Rate (Actual — measured volume)",
         formula: "Q = (V × 3.6) / t",
         variables: [
           { sym: "Q", desc: "Flow rate (L/h)" },
@@ -41,7 +41,7 @@ const SECTIONS: Section[] = [
           "Measures flow rate by directly measuring accumulated water volume over time. Used as the ground truth when no flow sensor is present.",
       },
       {
-        name: "Flow Rate (With Sensor)",
+        name: "Flow Rate (Pulse-based — YF-S201)",
         formula: "Q = (P × 3600) / (K × t)",
         variables: [
           { sym: "Q", desc: "Flow rate (L/h)" },
@@ -51,7 +51,18 @@ const SECTIONS: Section[] = [
         ],
         usedIn: "Flow Rate tab, RunDetail",
         significance:
-          "Estimates flow rate from the hall-effect sensor's pulse output. The K-factor (default 440 pulses/L for YF-S201) converts pulses to volume. Must be calibrated for accuracy.",
+          "Estimates flow rate from the YF-S201 hall-effect sensor's pulse output. The K-factor (default 440 pulses/L) converts pulses to volume. Compare against the actual volume-derived flow on the same reading to assess accuracy.",
+      },
+      {
+        name: "Err % (per reading)",
+        formula: "Err% = (V_est − V_act) / V_act × 100",
+        variables: [
+          { sym: "V_est", desc: "Estimated volume from pulses (mL)" },
+          { sym: "V_act", desc: "Measured volume collected (mL)" },
+        ],
+        usedIn: "RunDetail (Err % column)",
+        significance:
+          "Compares the pulse-derived value against the measured value on the same row. Negative means the pulse-based reading is BELOW the actual (under-read); positive means it is above (over-read). A single column suffices because the flow-rate error is the same number: Q = V·3.6/t, so the shared factor 3.6/t cancels in the ratio, making the volume error and the flow error algebraically identical.",
       },
     ],
   },
@@ -68,7 +79,7 @@ const SECTIONS: Section[] = [
           { sym: "P", desc: "Pulse count" },
           { sym: "V", desc: "Volume collected (mL)" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "Computes the actual PPL for a single calibration test by comparing pulse output against a known measured volume. Multiple readings are averaged for the calibrated value.",
       },
@@ -80,9 +91,20 @@ const SECTIONS: Section[] = [
           { sym: "PPLᵢ", desc: "PPL from each calibration reading" },
           { sym: "n", desc: "Number of calibration readings" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "The mean PPL across all calibration readings. Use this as the K-factor in your TestRun settings. Higher n and lower CoV indicate a more reliable calibration.",
+      },
+      {
+        name: "Calculated PPL (auto, from averages)",
+        formula: "PPL_calc = P̄ / (V̄ / 1000)",
+        variables: [
+          { sym: "P̄", desc: "Average pulse count across readings" },
+          { sym: "V̄", desc: "Average measured volume (mL)" },
+        ],
+        usedIn: "RunDetail, FlowStats, Pulse vs Actual t-Test tab",
+        significance:
+          "Automatically derived from the average pulses and average measured volume — equivalently total pulses ÷ total litres. Because it is a ratio of means rather than a mean of ratios, each reading is weighted in proportion to its volume, so a short low-flow trial is not over-weighted relative to a long one. Use this as the K-factor in your TestRun settings to calibrate the Est. Vol column.",
       },
       {
         name: "Volume from Pulses",
@@ -189,7 +211,7 @@ const SECTIONS: Section[] = [
           { sym: "x̄_with", desc: "Mean flow rate with sensor" },
           { sym: "x̄_without", desc: "Mean flow rate without sensor" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "Quantifies the hydraulic resistance introduced by the flow sensor. RF < 1 means the sensor reduces flow. In deployment (without sensor), actual flow is higher by 1/RF.",
       },
@@ -200,7 +222,7 @@ const SECTIONS: Section[] = [
           { sym: "Loss", desc: "Volume loss due to sensor (%)" },
           { sym: "RF", desc: "Resistance factor" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "Expresses sensor resistance as a percentage of flow reduction. If Loss = 8%, the sensor causes an 8% decrease in measured volume compared to the true (no-sensor) flow.",
       },
@@ -220,7 +242,7 @@ const SECTIONS: Section[] = [
           { sym: "s₁², s₂²", desc: "Group variances" },
           { sym: "n₁, n₂", desc: "Group sample sizes" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "Measures how many standard errors apart the two group means are. Larger |t| indicates a greater difference between with-sensor and without-sensor flow rates.",
       },
@@ -233,7 +255,7 @@ const SECTIONS: Section[] = [
           { sym: "s²", desc: "Group variance" },
           { sym: "n", desc: "Group sample size" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "Adjusts degrees of freedom when groups have unequal variances. More accurate than the pooled t-test for real-world data where variance differs between methods.",
       },
@@ -245,7 +267,7 @@ const SECTIONS: Section[] = [
           { sym: "I_x", desc: "Regularized incomplete beta function" },
           { sym: "x", desc: "df / (df + t²)" },
         ],
-        usedIn: "Sensor t-Test tab",
+        usedIn: "Pulse vs Actual t-Test tab",
         significance:
           "The probability of observing a difference as extreme as the data if the null hypothesis (no difference) is true. p < 0.05 → reject null → sensor has a significant effect on flow rate.",
       },
@@ -311,6 +333,92 @@ const SECTIONS: Section[] = [
         usedIn: "Power tab",
         significance:
           "Instantaneous power consumption of the microplastic sampling robot's subsystems. Used to estimate battery life and power supply requirements for field deployment.",
+      },
+    ],
+  },
+  {
+    title: "Extrapolation",
+    icon: BarChart3,
+    color: "text-orange-400",
+    formulas: [
+      {
+        name: "Linear Extrapolation (OLS)",
+        formula: "ŷ = a + bx_target  where  b = (n·Σ(xy) - Σx·Σy) / (n·Σ(x²) - (Σx)²),  a = (Σy - b·Σx) / n",
+        variables: [
+          { sym: "ŷ", desc: "Predicted value" },
+          { sym: "a", desc: "Intercept" },
+          { sym: "b", desc: "Slope (ordinary least squares)" },
+          { sym: "n", desc: "Number of data points (default last 5)" },
+          { sym: "x_target", desc: "Target X value (test # or min)" },
+        ],
+        usedIn: "Flow Rate tab (Extrapolate toggle)",
+        significance:
+          "Uses ordinary least squares regression on the last 5 data points for a more robust projection than 2-point slope. More stable against outlier readings. Projected points shown as a dashed line at 50% opacity.",
+      },
+      {
+        name: "Extrapolation Step (Test # mode)",
+        formula: "x_target = max test number across all runs",
+        variables: [
+          { sym: "x_target", desc: "Target test number (integer)" },
+          { sym: "max test #", desc: "Longest run's final test number" },
+        ],
+        usedIn: "Flow Rate tab",
+        significance:
+          "Shorter runs are extrapolated one test-number at a time until they reach the longest run's test count. Each step increases x by 1.",
+      },
+      {
+        name: "Extrapolation Step (Elapsed time mode)",
+        formula: "x_target = max elapsed minutes across all runs",
+        variables: [
+          { sym: "x_target", desc: "Target elapsed time (minutes)" },
+          { sym: "max min", desc: "Longest run's final elapsed minute" },
+        ],
+        usedIn: "Flow Rate tab",
+        significance:
+          "Shorter runs are extrapolated forward along the time axis using the same slope method, with one projected point per elapsed-minute step until reaching the longest run's duration.",
+      },
+    ],
+  },
+  {
+    title: "Pump Multiplier",
+    icon: Activity,
+    color: "text-cyan-400",
+    formulas: [
+      {
+        name: "Combined Flow Rate",
+        formula: "Q_combined = Q_per_pump × N_pumps",
+        variables: [
+          { sym: "Q_combined", desc: "Combined system flow rate (L/h)" },
+          { sym: "Q_per_pump", desc: "Measured flow rate of one pump (L/h)" },
+          { sym: "N_pumps", desc: "Number of pumps in deployment (default 2)" },
+        ],
+        usedIn: "Analysis tab (Pumps stepper)",
+        significance:
+          "Scales a single-pump measurement to estimate total system throughput. The default of 2 pumps doubles all displayed flow rates, volumes, and projections across all flow-related tabs.",
+      },
+      {
+        name: "Combined Accumulated Volume",
+        formula: "V_combined = V_per_pump × N_pumps",
+        variables: [
+          { sym: "V_combined", desc: "Combined volume (L)" },
+          { sym: "V_per_pump", desc: "Measured volume of one pump (L)" },
+          { sym: "N_pumps", desc: "Number of pumps in deployment" },
+        ],
+        usedIn: "Volume tab",
+        significance:
+          "Estimates total sampling volume for a multi-pump deployment by scaling the measured per-pump accumulation. Affects VolumeChart, stat cards, and hour projection.",
+      },
+      {
+        name: "Deployment Time Estimate",
+        formula: "T_target = 1000 / (Q_per_pump × N_pumps)",
+        variables: [
+          { sym: "T_target", desc: "Estimated hours to fill 1000 L container" },
+          { sym: "Q_per_pump", desc: "Average flow rate per pump (L/h)" },
+          { sym: "N_pumps", desc: "Number of pumps" },
+        ],
+        usedIn: "Volume Insights, Projection tab",
+        significance:
+          "Projects how long a multi-pump system takes to fill a target container. The pump multiplier is a linear scaling — assumes all pumps operate identically and independently.",
       },
     ],
   },
@@ -417,3 +525,4 @@ export default function References() {
     </div>
   );
 }
+

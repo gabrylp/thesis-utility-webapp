@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db, type TestRun, type FlowReading, type PowerReading, type CommReading } from "@/lib/db";
 import { syncManager } from "@/lib/sync";
 import { generateId, formatDateTime } from "@/lib/utils";
-import { computeFlowRate, estimateVolumeFromPulses } from "@/lib/stats";
+import { computeFlowRate, estimateVolumeFromPulses, volumeErrorPct, computeAggregatePPL } from "@/lib/stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { FlowFormulaCard } from "@/components/analysis/FlowFormulaCard";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ArrowLeft, Plus, Trash2, Download, Upload } from "lucide-react";
+
+function ErrorCell({ value }: { value: number | null }) {
+  if (value === null) return <span className="text-muted-foreground/50">—</span>;
+  const abs = Math.abs(value);
+  const color = abs <= 5 ? "text-green-400" : abs <= 10 ? "text-yellow-400" : "text-red-400";
+  return <span className={color}>{value > 0 ? "+" : ""}{value.toFixed(4)}%</span>;
+}
 
 export default function RunDetail() {
   const { id } = useParams<{ id: string }>();
@@ -36,6 +43,10 @@ export default function RunDetail() {
     if (id) loadAll();
   }, [id]);
 
+  const kFactor = run?.k_factor || 440;
+
+  const aggPpl = useMemo(() => computeAggregatePPL(flowReadings), [flowReadings]);
+
   async function loadAll() {
     if (!id) return;
     setRun(await db.test_runs.get(id) || null);
@@ -44,12 +55,19 @@ export default function RunDetail() {
     setCommReadings(await db.comm_readings.where("run_id").equals(id).toArray());
   }
 
-  async function updateRun(updates: Partial<TestRun>) {
+  function updateRun(updates: Partial<TestRun>) {
     if (!run) return;
-    const updated = { ...run, ...updates, updated_at: new Date().toISOString() };
-    await db.test_runs.put(updated);
-    await syncManager.queueChange("test_runs", "update", updated as any);
-    setRun(updated);
+    // Update state synchronously so the input stays controlled and the caret
+    // does not jump. Persisting is fire-and-forget: awaiting IndexedDB before
+    // setState would let the `value` prop lag the DOM by a keystroke, and the
+    // functional form stops fast typing from clobbering itself.
+    setRun((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...updates, updated_at: new Date().toISOString() };
+      void db.test_runs.put(next);
+      void syncManager.queueChange("test_runs", "update", next as any);
+      return next;
+    });
   }
 
   async function addFlowReading(count = 1) {
@@ -76,8 +94,7 @@ export default function RunDetail() {
     const existing = await db.flow_readings.get(readingId);
     if (!existing) return;
     const merged = { ...existing, ...updates };
-    const k = run?.k_factor || 440;
-    merged.flow_rate_lh = computeFlowRate(merged.method, merged.time_sec, merged.volume_ml, merged.pulses, k);
+    merged.flow_rate_lh = computeFlowRate(merged.method, merged.time_sec, merged.volume_ml, merged.pulses, kFactor);
     await db.flow_readings.put(merged);
     await syncManager.queueChange("flow_readings", "update", merged as any);
     setFlowReadings(flowReadings.map((r) => (r.id === readingId ? merged : r)));
@@ -505,7 +522,7 @@ export default function RunDetail() {
       {tab === "flow" && isFlow && (
         <div className="space-y-4">
           <FlowFormulaCard
-            kFactor={run.k_factor || 440}
+            kFactor={kFactor}
             onChange={(k) => {
               updateRun({ k_factor: k });
               flowReadings.forEach((r) => {
@@ -517,6 +534,29 @@ export default function RunDetail() {
               });
             }}
           />
+          {aggPpl.n > 0 && (
+            <Card className="border-blue-500/30">
+              <CardContent className="py-2.5 px-4">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-mono">
+                  <span className="text-muted-foreground">Calculated PPL</span>
+                  <span className="text-blue-400 font-semibold text-sm">{aggPpl.ppl.toFixed(1)} pulses/L</span>
+                  <span className="text-muted-foreground">
+                    avg pulses <span className="text-foreground">{aggPpl.avgPulses.toFixed(1)}</span>
+                    {" / "}
+                    avg vol <span className="text-foreground">{aggPpl.avgVolumeMl.toFixed(1)} mL</span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    {aggPpl.n} reading{aggPpl.n !== 1 ? "s" : ""} with both values
+                  </span>
+                  {Math.abs(aggPpl.ppl - kFactor) > 0.5 && (
+                    <span className="text-yellow-400/90">
+                      differs from the run K-factor of {kFactor}
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-3">
               <CardTitle className="text-sm font-medium">Flow Readings</CardTitle>
@@ -538,15 +578,14 @@ export default function RunDetail() {
                 <p className="text-sm text-muted-foreground text-center py-6">No flow readings recorded.</p>
               ) : (
                 <div className="overflow-x-auto">
-                    <table className="w-full text-xs table-fixed">
+                    <table className="w-full min-w-[1200px] text-xs table-fixed">
                     <thead>
                       <tr className="border-b border-border/50 text-muted-foreground">
                         <th className="text-center font-medium py-1.5 px-2 w-8">#</th>
-                        <th className="text-left font-medium py-1.5 px-2">Method</th>
                         <th className="text-right font-medium py-1.5 px-2">
                           <div className="flex items-center justify-end gap-1">
                             <span>Elapsed (s)</span>
-                            <input type="number" min={0} value={intervalSec || ""} onChange={(e) => setIntervalSec(parseFloat(e.target.value) || 0)} className="w-12 h-6 rounded border border-input bg-transparent px-1 text-[10px] text-center [appearance:textfield]" placeholder="Int" title="Interval (s) — auto-sequences elapsed" />
+                            <input type="number" min={0} value={intervalSec || ""} onChange={(e) => setIntervalSec(parseFloat(e.target.value) || 0)} className="w-12 h-6 rounded border border-input bg-transparent px-1 text-[10px] text-center [appearance:textfield]" placeholder="Int" />
                           </div>
                         </th>
                         <th className="text-right font-medium py-1.5 px-2">
@@ -557,37 +596,33 @@ export default function RunDetail() {
                               setDurationSec(v);
                               if (v > 0) {
                                 for (const r of flowReadings) {
-                                  const updated = { ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, run?.k_factor || 440) };
-                                  await db.flow_readings.put(updated);
-                                }
-                                setFlowReadings((prev) => prev.map((r) => ({ ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, run?.k_factor || 440) })));
+                    const updated = { ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, kFactor) };
+                    await db.flow_readings.put(updated);
+                  }
+                  setFlowReadings((prev) => prev.map((r) => ({ ...r, time_sec: v, flow_rate_lh: computeFlowRate(r.method, v, r.volume_ml, r.pulses, kFactor) })));
                               }
-                            }} className="w-12 h-6 rounded border border-input bg-transparent px-1 text-[10px] text-center [appearance:textfield]" placeholder="Dur" title="Duration (s) — updates all time values" />
+                            }} className="w-12 h-6 rounded border border-input bg-transparent px-1 text-[10px] text-center [appearance:textfield]" placeholder="Dur" />
                           </div>
                         </th>
-                        <th className="text-right font-medium py-1.5 px-2">Vol (mL)</th>
                         <th className="text-right font-medium py-1.5 px-2">Pulses</th>
-                        <th className="text-right font-medium py-1.5 px-2 text-blue-400" title="Estimated volume from pulses using calibrated K-factor">Est. Vol</th>
-                        <th className="text-right font-medium py-1.5 px-2">Flow (L/h)</th>
+                        <th className="text-right font-medium py-1.5 px-2 text-blue-400">Est. Vol</th>
+                        <th className="text-right font-medium py-1.5 px-2">Vol (mL)</th>
+                        <th className="text-right font-medium py-1.5 px-2">PPL</th>
+                        <th className="text-right font-medium py-1.5 px-2 text-blue-400">Est. Flow</th>
+                        <th className="text-right font-medium py-1.5 px-2 text-green-400">Act. Flow</th>
+                        <th className="text-right font-medium py-1.5 px-2">Err %</th>
                         <th className="text-left font-medium py-1.5 px-2">Notes</th>
                         <th className="font-medium py-1.5 px-2 w-10"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {flowReadings.map((r, idx) => (
+                      {flowReadings.map((r, idx) => {
+                        const estVol = estimateVolumeFromPulses(r.pulses, kFactor);
+                        const pulseFlowLh = computeFlowRate("with_sensor", r.time_sec, r.volume_ml, r.pulses, kFactor);
+                        const actualFlowLh = computeFlowRate("without_sensor", r.time_sec, r.volume_ml, r.pulses, kFactor);
+                        return (
                         <tr key={r.id} className="border-b border-border/30 hover:bg-secondary/10 transition-colors">
                           <td className="py-1 px-2 text-center text-muted-foreground">{idx + 1}</td>
-                          <td className="py-1 px-2">
-                            <Select
-                              value={r.method}
-                              onChange={(e) => updateFlowReading(r.id, { method: e.target.value as any })}
-                              options={[
-                                { value: "without_sensor", label: "No Sensor" },
-                                { value: "with_sensor", label: "With Sensor" },
-                              ]}
-                              className="h-7 text-xs w-full min-w-0"
-                            />
-                          </td>
                           <td className="py-1 px-2 text-right font-mono text-muted-foreground text-xs">
                             {intervalSec > 0 ? (intervalSec * (idx + 1)).toFixed(0) : "-"}
                           </td>
@@ -595,16 +630,25 @@ export default function RunDetail() {
                             <Input type="number" value={r.time_sec || ""} onChange={(e) => updateFlowReading(r.id, { time_sec: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right [appearance:textfield]" />
                           </td>
                           <td className="py-1 px-2">
-                            <Input type="number" value={r.volume_ml || ""} onChange={(e) => updateFlowReading(r.id, { volume_ml: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right [appearance:textfield]" />
+                            <Input type="number" value={r.pulses || ""} onChange={(e) => updateFlowReading(r.id, { pulses: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right [appearance:textfield]" />
+                          </td>
+                          <td className="py-1 px-2 text-right font-mono text-xs text-blue-400">
+                            {r.pulses > 0 ? estVol.toFixed(1) : "-"}
                           </td>
                           <td className="py-1 px-2">
-                            <Input type="number" value={r.method === "with_sensor" ? r.pulses || "" : ""} disabled={r.method !== "with_sensor"} onChange={(e) => updateFlowReading(r.id, { pulses: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right disabled:opacity-30 [appearance:textfield]" />
+                            <Input type="number" value={r.volume_ml || ""} onChange={(e) => updateFlowReading(r.id, { volume_ml: parseFloat(e.target.value) || 0 })} className="h-7 text-xs text-right [appearance:textfield]" />
                           </td>
-                          <td className="py-1 px-2 text-right font-mono text-xs text-blue-400" title="Estimated from pulses using K-factor">
-                            {r.method === "with_sensor" && r.pulses > 0 ? estimateVolumeFromPulses(r.pulses, run?.k_factor || 440).toFixed(1) : "-"}
+                          <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">
+                            {r.pulses > 0 && r.volume_ml > 0 ? (r.pulses / (r.volume_ml / 1000)).toFixed(1) : "-"}
                           </td>
-                          <td className="py-1 px-2 text-right font-mono font-semibold text-green-400">
-                            {r.flow_rate_lh.toFixed(1)}
+                          <td className="py-1 px-2 text-right font-mono text-xs text-blue-400">
+                            {pulseFlowLh > 0 ? pulseFlowLh.toFixed(1) : "-"}
+                          </td>
+                          <td className="py-1 px-2 text-right font-mono text-xs font-semibold text-green-400">
+                            {actualFlowLh > 0 ? actualFlowLh.toFixed(1) : "-"}
+                          </td>
+                          <td className="py-1 px-2 text-right font-mono text-xs">
+                            <ErrorCell value={volumeErrorPct(estVol, r.volume_ml)} />
                           </td>
                           <td className="py-1 px-2">
                             <Input value={r.notes} onChange={(e) => updateFlowReading(r.id, { notes: e.target.value })} placeholder="Notes..." className="h-7 text-xs" />
@@ -615,7 +659,8 @@ export default function RunDetail() {
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

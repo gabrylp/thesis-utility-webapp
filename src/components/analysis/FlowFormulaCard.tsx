@@ -15,11 +15,11 @@ export function FlowFormulaCard({ kFactor, onChange }: Props) {
 
         <div className="grid md:grid-cols-2 gap-4">
           <div className="rounded-lg bg-black/30 p-3 font-mono text-xs leading-relaxed">
-            <p className="text-green-400 font-semibold text-sm mb-1">Without Sensor</p>
+            <p className="text-green-400 font-semibold text-sm mb-1">Actual (measured volume)</p>
             <p className="text-muted-foreground">Q (L/h) = (Volume_mL × 3.6) / Time_s</p>
           </div>
           <div className="rounded-lg bg-black/30 p-3 font-mono text-xs leading-relaxed">
-            <p className="text-blue-400 font-semibold text-sm mb-1">With Sensor</p>
+            <p className="text-blue-400 font-semibold text-sm mb-1">Pulse-based (YF-S201 pulses)</p>
             <p className="text-muted-foreground">Q (L/h) = (Pulses × 3600) / (K × Time_s)</p>
           </div>
         </div>
